@@ -27,23 +27,23 @@ spec:
     spec:
       containers:
       - name: kafka-producer-grpc
-        image: us.gcr.io/ruckussgdc-rsa-builder/kafka-producer-grpc:2.0.0
+        image: us.gcr.io/ruckussgdc-rsa-builder/kafka-producer-grpc:pubsub
         imagePullPolicy: Always
         resources:
           requests:
-            memory: "5Gi"
+            memory: "4Gi"
             cpu: "2"
           limits:
-            memory: "5Gi"
+            memory: "4Gi"
             cpu: "2"
         env:
         - name: Log.Verbose
           value: "true"
-        - name: GOGC
-          value: "50"
         - name: Kafka.Brokers
           value: kafka-0.kafka-headless-svc:9092,kafka-1.kafka-headless-svc:9092,kafka-2.kafka-headless-svc:9092
         - name: Proxy.Port
           value: "19091"
+        - name: Pubsub.Timeout
+          value: "60"
         ports:
         - containerPort: 19091

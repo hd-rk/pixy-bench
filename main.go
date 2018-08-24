@@ -5,9 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/Shopify/sarama"
-	"google.golang.org/grpc"
-	_ "google.golang.org/grpc/encoding/gzip"
 	"io"
 	"io/ioutil"
 	"log"
@@ -19,32 +16,60 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"cloud.google.com/go/pubsub"
+	"github.com/Shopify/sarama"
+	"google.golang.org/grpc"
+	_ "google.golang.org/grpc/encoding/gzip"
 	// "reflect"
 )
 
+var paramMap = map[string][]string{
+	"pub-ctrl": []string{"topic", "repeat", "input"},
+	"sub-ctrl": []string{"server", "topic", "repeat"},
+	"default":  []string{"server", "topic", "repeat", "input"},
+}
+
+//BM_TYPE= SERVER= TOPIC= REPEAT= INPUT= go run main.go
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	bm_type := os.Args[1]
+	bm_type := os.Getenv("BM_TYPE")
+	log.Printf("benchmark type %s", bm_type)
 
-	repeat, err := strconv.Atoi(os.Args[2])
-	if err != nil {
-		panic(err)
+	otherParams, ok := paramMap[bm_type]
+	if !ok {
+		otherParams = paramMap["default"]
 	}
-	log.Printf("sending %d messages", repeat)
 
-	filename := os.Args[3]
-	log.Printf("message content in file %s", filename)
+	var server, topic string
+	var repeat int
+	var data []byte
+	var err error
 
-	server := os.Args[4]
-	log.Printf("server at %s", server)
-
-	topic := os.Args[5]
-	log.Printf("topic is %s", topic)
-
-	data, err := ioutil.ReadFile(fmt.Sprintf("./input/%s", filename))
-	if err != nil {
-		panic(err)
+	for _, param := range otherParams {
+		switch param {
+		case "server":
+			server = os.Getenv("SERVER")
+			log.Printf("server at %s", server)
+		case "topic":
+			topic = os.Getenv("TOPIC")
+			log.Printf("topic is %s", topic)
+		case "repeat":
+			repeatStr := os.Getenv("REPEAT")
+			repeat, err = strconv.Atoi(repeatStr)
+			if err != nil {
+				log.Fatalf("invalid repeat %v", repeatStr)
+			}
+			log.Printf("sending %d messages", repeat)
+		case "input":
+			filename := os.Getenv("INPUT")
+			data, err = ioutil.ReadFile(fmt.Sprintf("./input/%s", filename))
+			if err != nil {
+				log.Fatalf("cannot read input file %v", filename)
+			}
+			log.Printf("message content in file %s", filename)
+		}
 	}
 
 	log.Println()
@@ -60,7 +85,83 @@ func main() {
 		bm_grpc_stream(server, topic, data, repeat)
 	case "mlisa-stream-p":
 		bm_parallel(server, topic, data, repeat)
+	case "sub-ctrl":
+		subscribeControlTopic(server, topic, repeat)
+	case "pub-ctrl":
+		publishControlTopic(topic, repeat, data)
 	}
+}
+
+func subscribeControlTopic(address string, topic string, repeat int) {
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := mlisa.NewProxyClient(conn)
+	stream, err := client.SubcribeCtrlMsg(ctx)
+	if err != nil {
+		log.Fatalf("err in ctrl stream creation: %v", err)
+	}
+
+	waitc := make(chan struct{})
+	go func() {
+		for i := 0; i < repeat; i++ {
+			message, err := stream.Recv()
+			if err == io.EOF {
+				close(waitc)
+				return
+			}
+			if err != nil {
+				log.Fatalf("err in ctrl stream receive: %v", err)
+			} else {
+				log.Printf("received ctrl msg %v", message.GetMessageId())
+				go func() {
+					ackMsg := &mlisa.CtrlReq{Payload: &mlisa.CtrlReq_Ack{Ack: &mlisa.CtrlReq_AckPayload{
+						ClusterId: topic,
+						MessageId: message.GetMessageId(),
+						Response:  message.GetMessage(),
+					}}}
+					select {
+					case <-time.After(5 * time.Second):
+						err = stream.Send(ackMsg)
+						if err != nil {
+							log.Printf("err sending sz ack %v", err)
+						}
+					}
+				}()
+			}
+		}
+	}()
+
+	msg := &mlisa.CtrlReq{Payload: &mlisa.CtrlReq_Init{Init: &mlisa.CtrlReq_InitPayload{ClusterId: topic}}}
+
+	err = stream.Send(msg)
+	if err != nil {
+		log.Fatalf("err in stream send: %v", err)
+	}
+
+	<-waitc
+}
+
+func publishControlTopic(topic string, repeat int, data []byte) {
+	ctx := context.Background()
+	client, err := pubsub.NewClient(ctx, "ruckussgdc-rsa-builder")
+	if err != nil {
+		log.Fatalf("cannot create pubsub client %v", err)
+	}
+	psTopic := client.Topic("mlisa-control-req." + topic)
+	log.Printf("publishing %d messages to pubsub topic %v", repeat, psTopic.ID())
+	msg := &pubsub.Message{Data: data}
+	for i := 0; i < repeat; i++ {
+		psTopic.Publish(ctx, msg)
+	}
+	psTopic.Stop()
+	log.Println("Done publishing")
 }
 
 func bm_grpc(address string, topic string, data []byte, repeat int) {

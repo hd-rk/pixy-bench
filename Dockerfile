@@ -19,7 +19,8 @@ RUN mkdir -p /tmp/protoc && \
 RUN go get google.golang.org/grpc && \
     go get github.com/golang/protobuf/protoc-gen-go && \
     go get github.com/Shopify/sarama && \
-    go get google.golang.org/grpc/encoding/gzip
+    go get google.golang.org/grpc/encoding/gzip && \
+    go get cloud.google.com/go/pubsub
 
 COPY lib     $GOPATH/src/pixy-bench/lib
 COPY input   $GOPATH/src/pixy-bench/input
