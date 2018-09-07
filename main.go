@@ -108,22 +108,16 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 		log.Fatalf("err in ctrl stream creation: %v", err)
 	}
 
-	waitc := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for i := 0; i < repeat; i++ {
 			message, err := stream.Recv()
-			if err == io.EOF {
-				close(waitc)
-				return
-			}
-			if err != nil {
-				log.Fatalf("err in ctrl stream receive: %v", err)
-			} else {
-				log.Printf("received ctrl msg %v", message.GetMessageId())
+			if err == nil {
+				log.Printf("got message #%v", i)
 				go func() {
 					ackMsg := &mlisa.CtrlReq{Payload: &mlisa.CtrlReq_Ack{Ack: &mlisa.CtrlReq_AckPayload{
 						ClusterId: topic,
-						MessageId: message.GetMessageId(),
 						Response:  message.GetMessage(),
 					}}}
 					select {
@@ -134,6 +128,9 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 						}
 					}
 				}()
+			} else {
+				log.Fatalf("err in ctrl stream receive: %v", err)
+				return
 			}
 		}
 	}()
@@ -144,8 +141,7 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 	if err != nil {
 		log.Fatalf("err in stream send: %v", err)
 	}
-
-	<-waitc
+	<-done
 }
 
 func publishControlTopic(topic string, repeat int, data []byte) {
