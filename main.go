@@ -103,7 +103,7 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 	defer cancel()
 
 	client := mlisa.NewProxyClient(conn)
-	stream, err := client.SubcribeCtrlMsg(ctx)
+	stream, err := client.SubscribeCtrlMsg(ctx)
 	if err != nil {
 		log.Fatalf("err in ctrl stream creation: %v", err)
 	}
