@@ -18,7 +18,7 @@ metadata:
   name: kafka-go-client-deploy
   namespace: kafka
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: kafka-go-client
@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
       - name: client
-        image: us.gcr.io/ruckussgdc-rsa-builder/pixy-bench:pubsub
+        image: us.gcr.io/ruckussgdc-rsa-builder/pixy-bench:pubsub-2.0
         imagePullPolicy: Always
         command:
           - sleep

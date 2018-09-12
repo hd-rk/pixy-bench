@@ -21,6 +21,7 @@ import (
 	"github.com/Shopify/sarama"
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/metadata"
 	// "reflect"
 )
 
@@ -101,9 +102,10 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "mlisa-service-topic", "mlisa-control")
 
-	client := mlisa.NewProxyClient(conn)
-	stream, err := client.SubscribeCtrlMsg(ctx)
+	client := mlisa.NewControlMessageProxyClient(conn)
+	stream, err := client.StreamingPull(ctx)
 	if err != nil {
 		log.Fatalf("err in ctrl stream creation: %v", err)
 	}
@@ -116,16 +118,10 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 			if err == nil {
 				log.Printf("got message #%v", i)
 				go func() {
-					ackMsg := &mlisa.CtrlReq{Payload: &mlisa.CtrlReq_Ack{Ack: &mlisa.CtrlReq_AckPayload{
-						ClusterId: topic,
-						Response:  message.GetMessage(),
-					}}}
-					select {
-					case <-time.After(5 * time.Second):
-						err = stream.Send(ackMsg)
-						if err != nil {
-							log.Printf("err sending sz ack %v", err)
-						}
+					ackMsg := &mlisa.ControlMessagePullRequest{MessagePayloads: message.GetMessagePayloads()}
+					err = stream.Send(ackMsg)
+					if err != nil {
+						log.Printf("err sending sz ack %v", err)
 					}
 				}()
 			} else {
@@ -135,12 +131,11 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 		}
 	}()
 
-	msg := &mlisa.CtrlReq{Payload: &mlisa.CtrlReq_Init{Init: &mlisa.CtrlReq_InitPayload{ClusterId: topic}}}
-
-	err = stream.Send(msg)
-	if err != nil {
-		log.Fatalf("err in stream send: %v", err)
-	}
+	// msg := &mlisa.CtrlReq{Payload: &mlisa.CtrlReq_Init{Init: &mlisa.CtrlReq_InitPayload{ClusterId: topic}}}
+	// err = stream.Send(msg)
+	// if err != nil {
+	// 	log.Fatalf("err in stream send: %v", err)
+	// }
 	<-done
 }
 
@@ -150,7 +145,7 @@ func publishControlTopic(topic string, repeat int, data []byte) {
 	if err != nil {
 		log.Fatalf("cannot create pubsub client %v", err)
 	}
-	psTopic := client.Topic("mlisa-control-req." + topic)
+	psTopic := client.Topic("mlisa-control.request.sz." + topic)
 	log.Printf("publishing %d messages to pubsub topic %v", repeat, psTopic.ID())
 	msg := &pubsub.Message{Data: data}
 	for i := 0; i < repeat; i++ {
@@ -222,13 +217,14 @@ func bm_grpc_stream(address string, topic string, data []byte, repeat int) {
 	}
 	defer conn.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	duration := time.Duration(int64(0))
 
-	client := mlisa.NewProxyClient(conn)
-	stream, err := client.ProduceData(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "mlisa-service-topic", topic, "mlisa-enable-ack", "true")
+
+	client := mlisa.NewDataMessageProxyClient(conn)
+	stream, err := client.StreamingPush(ctx)
 	if err != nil {
 		log.Fatalf("err in stream get: %v", err)
 	}
@@ -236,7 +232,7 @@ func bm_grpc_stream(address string, topic string, data []byte, repeat int) {
 	waitc := make(chan struct{})
 	go func() {
 		for {
-			_, err := stream.Recv()
+			acks, err := stream.Recv()
 			if err == io.EOF {
 				close(waitc)
 				return
@@ -244,10 +240,13 @@ func bm_grpc_stream(address string, topic string, data []byte, repeat int) {
 			if err != nil {
 				log.Fatalf("err in stream receive: %v", err)
 			}
+			for _, ack := range acks.GetPushAcknowledgements() {
+				log.Printf("got ack from server %v %v", ack.GetBackend(), ack.GetBackendTopic())
+			}
 		}
 	}()
 
-	msg := &mlisa.DataMsg{Topic: topic, Message: data}
+	msg := &mlisa.DataMessagePushRequest{MessagePayloads: [][]byte{data}}
 
 	log.Printf("start grpc stream bench for %s", "mlisa")
 
