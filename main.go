@@ -102,7 +102,7 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ctx = metadata.AppendToOutgoingContext(ctx, "mlisa-service-topic", "mlisa-control")
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-mlisa-service-topic", "mlisa-control")
 
 	client := mlisa.NewControlMessageProxyClient(conn)
 	stream, err := client.StreamingPull(ctx)
@@ -117,6 +117,9 @@ func subscribeControlTopic(address string, topic string, repeat int) {
 			message, err := stream.Recv()
 			if err == nil {
 				log.Printf("got message #%v", i)
+				for _, msg := range message.GetMessagePayloads() {
+					log.Println(string(msg))
+				}
 				go func() {
 					ackMsg := &mlisa.ControlMessagePullRequest{MessagePayloads: message.GetMessagePayloads()}
 					err = stream.Send(ackMsg)
@@ -221,7 +224,7 @@ func bm_grpc_stream(address string, topic string, data []byte, repeat int) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ctx = metadata.AppendToOutgoingContext(ctx, "mlisa-service-topic", topic, "mlisa-enable-ack", "true")
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-mlisa-service-topic", topic, "x-mlisa-enable-ack", "true")
 
 	client := mlisa.NewDataMessageProxyClient(conn)
 	stream, err := client.StreamingPush(ctx)
