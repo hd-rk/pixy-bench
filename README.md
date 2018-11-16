@@ -9,5 +9,5 @@ go get google.golang.org/grpc \
 ```
 ## Run
 ```
-go run main.go (mlisa-stream|mlisa-stream-p) {num_of_messages} (8|64|512)kb.txt {proxy_host:proxy_port} {kafka_topic}
+BM_TYPE=mlisa-stream TOPIC=mlisa-data.test-topic REPEAT=100 INPUT=1kb.txt SERVER=messagehub.staging.mlisa.io:19091 go run main.go
 ```
